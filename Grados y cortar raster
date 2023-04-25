@@ -1,0 +1,73 @@
+#### Edit by MPMG
+
+# Para agregar grados al shape
+# Para cortar raster climatico segun mapa específico (shape)
+
+library(terra)
+library(devtools)
+library(sp)
+library(raster)
+library(rgdal)
+library(spocc)
+library(rgbif)
+library(scrubr)
+library(FactoMineR)
+library(corrplot)
+library(PerformanceAnalytics)
+library(factoextra)
+library(installr)
+library(rgdal)
+library(sf)
+
+
+# Agregar grados al extent
+# Solo si es necesario si al realizar matriz ambiental borra individuos (na.omit)
+
+shapepresencia<-readOGR("~/Desktop/Datos Diversity Arrays/DatosShp/bichos_90.shp")
+ext_ini<-extent(shapepresencia)
+facext<-1 # le agrega un grado a los 4 lados del extent
+extension <-extent((ext_ini@xmin-facext),
+                  (ext_ini@xmax+facext),
+                  (ext_ini@ymin-facext),
+                  (ext_ini@ymax+facext))
+
+# convertir en objeto raster
+r <- raster(extension)
+
+# Convertir el objeto RasterLayer a un objeto SpatialPolygonsDataFrame
+r_poly <- rasterToPolygons(r)
+
+print(r_poly)
+
+# Guardar el objeto modificado en formato shapefile
+writeOGR(obj = r_poly, dsn = "~/Desktop/Datos Diversity Arrays/DatosShp", layer = "Bichos_90_extent", driver = "ESRI Shapefile")
+
+#####################################################################################################################################################
+
+# PARA CORTAR EL SHAPE
+
+## Extract raster values from points
+# Agregar raster de variables climáticas
+setwd ("/Users/MPMG/Desktop/Datos Climaticos/TODASCORTADAS")
+dir()
+Bio <- raster("ai_v3_01.tif")
+
+# Cargar el archivo shapefile que sería el poligono donde se encuentran las coordenadas
+my_sf <- st_read("~/Desktop/Datos Diversity Arrays/DatosShp/Bichos_90_extent.shp")
+
+# Obtener la extensión numérica del shapefile
+ext <- extent(my_sf)
+
+# Imprimir la extensión numérica del shapefile
+print(ext)
+
+# Visualizar la estructura de la capa
+str(my_sf)
+
+#### PARA CORTAR EL RASTER
+
+# Cortar el raster para el objeto SpatialPolygons
+raster_cortado <- crop(Bio, my_sf)
+print(raster_cortado)
+
+writeRaster(raster_cortado, filename= "/Users/MPMG/Desktop/Datos Climaticos/CMI/CHELSA_cmi_range.tif", format="GTiff")
