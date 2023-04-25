@@ -1,0 +1,43 @@
+## RASTER by MPM
+
+#PARA VERFICAR EXTENSION Y RESOLUCION DEL RASTER
+
+setwd ("/Users/MPMG/Desktop/Datos Climaticos/Radiacion")
+dir()
+Bio <- raster("wc2.1_30s_srad_01.tif")
+
+# Obtener la resolución del shapefile (convertir primero en raster)
+raster_res <- res(Bio)
+print(raster_res)
+
+# Obtener la extensión numérica del shapefile
+ext <- extent(Bio)
+print(ext)
+
+# Definir la extensión de coordenadas específica
+new_extent <- extent(-80.00014, 69.99986, -50.00014, 49.99986)
+
+# Recortar el raster segun la nueva extensión
+raster_cropped <- crop(Bio, new_extent)
+print(raster_cropped)
+
+# Verificar nueva extensión numérica del shapefile
+ext <- extent(raster_cropped)
+print(ext)
+plot(ext)
+
+
+# COMPARAR ENTRE 2 DATOS
+
+#verificar que raster tengan misma extension
+setwd ("/Users/MPMG/Desktop/Datos Climaticos/climachelsa")
+dir()
+
+# Cargar los archivos de ejemplo
+r1 <- raster("ai_v3_01.tif")
+r2 <- raster("CHELSA_cmi_max.tif")
+
+# Verificar si los rasters tienen la misma extensión
+if (all(extent(r1) == extent(r2))) {
+  print("Los rasters tienen la misma extensión.")} else {
+    print("Los rasters tienen diferentes extensiones.")}
