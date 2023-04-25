@@ -1,0 +1,60 @@
+# Filtrado de datos genlight by MPM
+
+library(lfmm)
+library(poppr)
+library(fields)
+library(RColorBrewer)
+library(mapplots)
+library(LEA)
+library(dartR)
+library(rmarkdown)
+library(adegenet) # Genética de poblaciones
+library(dartR) # Para trabajar con archivos DartSeq
+library(diveRsity) # Análisis genético #devtools::install_github("EricArcher/strataG") - #library(strataG) # Análisis genético
+library(SNPRelate) # Análisis genético
+library(qvalue) # Análisis genético
+library(hierfstat) # Análisis genético
+library(HardyWeinberg)
+library(devtools) # Colección de herramientas de desarrollo de paquetes
+library(ggtern)
+library(networkD3)
+library(tidyverse)
+library(pheatmap)
+library(StAMPP) #you may need to install the package
+library(pegas)
+library(plotly)
+library(leaflet)
+library(hierfstat)
+library(leaflet.minicharts)
+library(mmod) 
+library(ggplot2) # Gráficas
+library(FSA)
+library(rcompanion)
+library(ggpubr)
+library(parallel)
+library(knitr)
+library(pander) # Orden de Tablas
+library(latexpdf) # Para la salida del pdf
+library(tinytex)  # Para la salida del pdf
+library(rmarkdown)  # Para la salida del pdf
+library(gplots)
+library(ggplot2)
+
+setwd("/Users/MPMG/Desktop/Datos Diversity Arrays/Report-DErios22-7421")
+gl <- gl.read.dart(filename = "Report_DErios22-7421_SNP_2.csv", covfilename = "EriosyceRod_ind_metadata.csv")
+
+# FILTERING
+gl1<-gl.filter.rdepth(gl, lower = 5,upper = 50) 
+gl2 <- gl.filter.callrate(gl1, method = "loc", threshold = 0.5)
+gl3 <- gl.filter.maf(gl2, threshold = 0.05)
+gl4 <- gl.filter.callrate(gl3, method = "ind", threshold = 0.5)
+
+gl4
+plot(gl4)
+nPop(gl4)
+popNames(gl4)
+nInd(gl4)
+nLoc(gl4)
+indNames(gl4)
+nombresgl4 <- data.frame(gl4$ind.names)
+write.csv(nombresgl4, "/Users/MPMG/Desktop/sdkfn.csv" 
