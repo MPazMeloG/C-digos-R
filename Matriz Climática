@@ -1,0 +1,110 @@
+# Matriz climática by MPM
+
+library(devtools)
+library(sp)
+library(raster)
+library(rgdal)
+library(spocc)
+library(rgbif)
+library(scrubr)
+library(FactoMineR)
+library(corrplot)
+library(PerformanceAnalytics)
+library(factoextra)
+library(rgdal)
+library(sf)
+library(usdm)
+library(readr)
+
+# Agregar raster de variables climáticas
+setwd ("/Users/MPMG/Desktop/Datos Climaticos/Aridez")
+dir()
+biosList <- list.files(pattern = ".tif")
+
+# load and stack raster
+bios <- stack(biosList)
+head(bios)
+
+## Si no funciona se puede utilizar la opción raster. ejemplo:
+# bio1<-raster("wc2.1_30s_bio_1.tif")
+# Para cada una de las variables y luego concatenarlas
+# bios <- stack(bio1,bio2,bio3...)
+
+# Extract raster values from points
+setwd ("~/Desktop/Tesis/Indiv+coorde")
+
+#FIN
+
+# read point data, and convert them into spatial points data frame #header = TRUE significa primera fila encabezado
+points <- read.table("TODOS_INDIVIDUOS.csv",  sep = ";" , header = TRUE)
+
+## Siesque no esta configurado PC, Para cambiar , por . #$indica el vector
+# points$LATITUD <- as.numeric(gsub(",", ".", gsub("\\.", "", points$LATITUD)))
+# points$LONGITUD <- as.numeric(gsub(",", ".", gsub("\\.", "", points$LONGITUD)))
+
+coordinates(points) <- ~ LONGITUD+ LATITUD
+
+# extract (define un elemento para cada ubicacion)
+rasValue<-extract(bios, points)
+
+# Agrega las coordenadas a la planilla
+Mix<-cbind(points,rasValue)
+
+# Genera el dataframe
+Mixdf <- as.data.frame(Mix)
+dim(Mixdf)
+
+# Obtener valores unicos
+Mixdf2 <- unique(Mixdf)
+dim(Mixdf2)
+
+# exclude na
+is.na(Mixdf2)
+dim(Mixdf2)
+
+# Generar matriz
+MatrizCLim <- na.omit(Mixdf2)
+dim(MatrizCLim)
+
+## Se podría guardar hasta aquí dependiendo del uso ##
+
+# Para borrar variables que correlacionan
+# Seleccionar sólo las variables climáticas
+climate_vars <- MatrizCLim [, 2:3]
+dim(climate_vars)
+
+# identify collinear variables that should be excluded
+v1 <- vifcor(climate_vars, th=0.8) 
+v1
+
+# exclude the collinear variables that were identified in
+re1 <- exclude(MatrizCLim,v1) 
+MatrizF <- data.frame(MatrizCLim$X,MatrizCLim$LONGITUD,MatrizCLim$LATITUD,re1)
+is.data.frame(MatrizF)
+
+# Guardar Subconjunto del conjunto de datos original con las variables seleccionadas
+write_delim(MatrizF, "/Users/MPMG/Desktop/Datos Climaticos/Matrices/Matriz_Aridez.csv", delim = ";")
+
+
+
+# PARA UNIR VARIAS MATRICES
+
+# Leer los archivos CSV
+
+setwd("/Users/MPMG/Desktop/Datos Climaticos/Matrices")
+dir()
+matriz1 <- read.csv("Matriz_Aridez.csv", sep =";")
+matriz2 <- read.csv("Matriz_Chelsa.csv", sep =";")
+matriz3 <- read.csv("Matriz_Radiacion.csv", sep =";")
+
+# Unir las matrices por columnas
+matriz_unida <- cbind(matriz1, matriz2, matriz3)
+
+# Imprimir la matriz resultante
+print(matriz_unida)
+
+# GUARDAR FINAL
+write_delim(matriz_unida, "/Users/MPMG/Desktop/Datos Climaticos/Matrices/Matriz_Total.csv", delim = ";")
+
+# o también #
+write.csv(matriz_unida, "/Users/MPMG/Desktop/Datos Climaticos/Matrices/Matriz_Total.csv")
