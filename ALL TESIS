@@ -1,0 +1,665 @@
+########## SEARCHING FOR GENOMIC ADAPTATION ###########
+          ### EDITED BY MPMG ###  
+            ### 11/05/2023 ###
+
+##### LIBRARIES #####
+
+library(rlang)
+library(lfmm)
+library(poppr)
+library(fields)
+library(RColorBrewer)
+library(mapplots)
+library(LandGenCourse)
+library(LEA)
+library(rmarkdown)
+library(adegenet) # Genética de poblaciones
+library(dartR) # Para trabajar con archivos DartSeq
+library(diveRsity) # Análisis genético #devtools::install_github("EricArcher/strataG") - #library(strataG) # Análisis genético
+library(SNPRelate) # Análisis genético
+library(qvalue) # devtools::install_version("qvalue", version = "2.22.0", repos = "http://cran.us.r-project.org")
+library(hierfstat) # Análisis genético
+library(HardyWeinberg)
+library(devtools) # Colección de herramientas de desarrollo de paquetes
+library(ggtern)
+library(networkD3)
+library(tidyverse)
+library(pheatmap)
+library(StAMPP) #you may need to install the package
+library(pegas)
+library(plotly)
+library(leaflet)
+library(hierfstat)
+library(leaflet.minicharts)
+library(mmod) 
+library(ggplot2) # Gráficas
+library(FSA)
+library(rcompanion)
+library(ggpubr)
+library(parallel)
+library(knitr)
+library(pander) # Orden de Tablas
+library(latexpdf) # Para la salida del pdf
+library(tinytex)  # Para la salida del pdf
+library(rmarkdown)  # Para la salida del pdf
+library(gplots)
+library(ggplot2)
+library(dplyr)
+library(car)
+
+
+################################ FILTERING ################################
+
+setwd("")
+gl <- gl.read.dart(filename = "Report_DErios22-7421_SNP_2.csv", covfilename = "Eriosyce_ind_popmap_B.csv")
+plot(gl)
+
+#Filtra Loci monomórficos
+gl1 <- gl.filter.monomorphs(gl)
+plot(gl1)
+
+#Profundidad de Lectura
+gl2 <-gl.filter.rdepth(gl1, lower = 5,upper = 50) 
+plot(gl2)
+
+#Repetibilidad promedio de los alelos en un locus
+gl3 <- gl.filter.reproducibility(gl2,t=0.9)
+plot(gl3)
+
+#Eliminacion de NA
+gl4 <- gl.filter.callrate(gl3, method = "loc", threshold = 0.6, plot.out = TRUE)
+plot(gl4)
+
+#Frecuencia de alelos menores
+gl5 <- gl.filter.maf(gl4, threshold = 0.05)
+plot(gl5)
+
+#gl6 <- gl.filter.callrate(gl3, method = "ind", threshold = 0.5)
+#gl6 <- gl.recalc.metrics(gl6)
+
+gl5
+gl.report.callrate(gl5)
+gl.report.callrate(gl5, method='ind')
+gl.smearplot(gl5)
+plot(gl5)
+nPop(gl5)
+
+table(pop(gl5))
+barplot(table(pop(gl5)), las=2)
+
+popNames(gl5)
+nInd(gl5)
+nLoc(gl5)
+indNames(gl5)
+
+# save filtering Dart format
+gl.save(gl5, "matriz_filtrada_gl3.rds", verbose = NULL)
+
+
+################################ STRUCTURING WITH LEA FOR IMPUTATION MATRIX ################################
+
+setwd("")
+
+# open filtered Dart
+gl5<-gl.load("matriz_filtrada_gl3.rds", verbose = NULL)
+class(gl5)
+dim(gl5)
+indNames(gl5)
+kk4<-as.matrix(gl5)
+dim(kk4)
+class(kk4)
+write.csv(kk4,"matriz_filtrada_gl3_87ind.csv")
+head(kk4)
+
+# Write genotypes in the lfmm and geno format
+write.lfmm(as.matrix(gl5), "FILTRADOS.lfmm")
+write.geno(as.matrix(gl5), "FILTRADOS.geno")
+
+# Looking for K value (number of ancestral populations) para imputación de matriz en este caso.                        
+# entropy = TRUE computes the cross-entropy criterion, # CPU = 4 is the number of CPU used (hidden input) project = NULL
+project = snmf("FILTRADOS.geno",
+               K = 1:10,
+               iterations = 100,
+               entropy = TRUE,
+               repetitions = 10, project = "new")
+project
+
+# plot cross-entropy criterion for all runs in the snmf project (min entropy)
+plot(project, col = "blue", pch = 19, cex = 1.2)
+summary(project)
+
+# select the best run
+best = which.min(cross.entropy(project, K = 5))
+
+# Plot
+my.colors <- c("lightblue", "olivedrab", "gold", "blue" , "magenta")
+barchart(project, K = 5, sort.by.Q = TRUE, run = best, border = NA, space = 0,
+                                col = my.colors,
+                                xlab = "Individuals",
+                                ylab = "Ancestry proportions",
+                                main = "Ancestry matrix") -> bp
+axis(1, at = 1:length(bp$order), labels = bp$order, las=1, cex.axis = 0.8)
+bp
+
+# Saving the ancestry Q-Matrix used for imputation
+QQ<-Q(project, K=5, run=best)
+write.csv(QQ,"MatrizQTOTAL.csv")
+
+
+# imput NA of LFMM (save automatic with _imputed.lfmm) (aquí obtenemos matriz sin NA)
+impute (project,"FILTRADOS.lfmm", "mode", K=5, run=best) #Queda guardada como FILTRADOS.lfmm_imputed.lfmm
+
+
+################################ LFMM LOOKING FOR ADAPTATION ################################
+
+setwd("")
+dir()
+
+# Open ready imputed LFMM (filtered and imputed table)
+y<-read.table("FILTRADOS.lfmm_imputed.lfmm")
+dim(y)
+Y<-as.matrix(y)
+head(Y)
+
+# Env. matrix
+x<-read.csv("MatrizTotal87.csv")
+head(x)
+dim(x)
+
+
+# Datos Ambientales 
+
+x<-x[,c(6:18)]
+X<-as.matrix(x)
+head(X)
+dim(X)
+
+# Mix lfmm(y) and env(x) matrix
+PR=NULL
+PR<-lfmm2(Y,X, K=5)
+pv <- lfmm2.test(PR, input = Y, env = X)
+str(pv)
+class(pv)
+
+# False discovery rate (FDR)
+qv<-qvalue(pv$pvalues, fdr.level = 0.05, pfdr = FALSE, lfdr.out = TRUE, pi0 = NULL)
+
+# Finishing 
+qvmat<-(qv$qvalues)
+
+dim(qvmat)
+colnames(qvmat) #columna loci
+rownames(qvmat) #fila ambiente
+
+var1<-qvmat[3,]
+head(var1)
+dim(as.matrix(var1))
+locilist.names <-colnames(qvmat) #loci
+var<-qvmat[3,]
+head(var)
+outliers_lfmm<- locilist.names[which(as.matrix(var) < 0.05)]
+
+#Identifies genetic markers that have a value of q less than 0.05, significant result
+#These markers are stored in the outliers_lfmm variable and added to the "outliersLFMM.csv"
+
+for (i in 1:ncol(X))
+{var<-qvmat[i,]
+outliers_lfmm<- locilist.names[which(as.matrix(var) < 0.05)]
+write.table(paste(rownames(qvmat)[i],"_",outliers_lfmm),file="outliersLFMM.csv",
+append=TRUE,row.names = TRUE,col.names = FALSE,quote=FALSE)}
+
+## OBTENCIÓN SNPS ADAPTATIVOS Y NEUTRALES
+setwd("")
+
+# Identification of atypical values (extreme values)
+listaoutliers <-substring(outliers_lfmm,10,18)
+head(listaoutliers)
+# Making and saving adapt matrix
+matriz_putativos <-y[,listaoutliers]
+dim(matriz_putativos)
+write.csv(matriz_putativos,"ADAPTATIVOS.csv")
+
+#Making and saving neutral matrix
+neutrales_lfmm<- locilist.names[which(as.matrix(var) >= 0.05)]
+listaneutrales<-substring(neutrales_lfmm,10,18)
+matriz_neutrales<-y[,listaneutrales]
+dim(matriz_neutrales)
+write.csv(matriz_neutrales,"NEUTRALES.csv")
+
+#Making and saving total matrix
+matriz_todos <- cbind(matriz_putativos,matriz_neutrales)
+dim(matriz_todos)
+write.csv(matriz_todos,"TODOSS.csv")
+
+#Save like Dart Format
+
+#NEUTRAL
+datos_matriz <- as.matrix(read.csv("/Users/MPMG/Desktop/ADAPTACION/NEUTRALES.csv", header = TRUE, row.names = 1))
+
+dim(datos_matriz)
+k <- as.genlight(datos_matriz)
+dim(k)
+plot(k)
+nInd(k)
+nLoc(k)
+indNames(k)
+gl.save(k, "matrizNEUTRAL.rds", verbose = NULL)
+
+#ADAPTATIV
+datos_matriz <- as.matrix(read.csv("/Users/MPMG/Desktop/ADAPTACION/ADAPTATIVOS.csv", header = TRUE, row.names = 1))
+dim(datos_matriz)
+w <- as.genlight(datos_matriz)
+dim(w)
+plot(w)
+nInd(w)
+nLoc(w)
+indNames(w)
+gl.save(w, "matrizADAPT.rds", verbose = NULL)
+
+
+################################ LEA structure only with neutrals or adaptativ ################################
+
+library(LEA)
+library(qvalue)
+
+### NEUTRALS
+
+datos_matriz <- as.matrix(read.csv("/Users/MPMG/Desktop/ADAPTACION/NEUTRALES.csv", header = TRUE, row.names = 1))
+dim(datos_matriz)
+setwd("/Users/MPMG/Desktop/ADAPTACION")
+
+# Write genotypes in the lfmm and geno format (already imputed)
+write.lfmm(as.matrix(datos_matriz), "NEUTRALES.lfmm")
+write.geno(as.matrix(datos_matriz), "NEUTRALES.geno")
+
+# Looking for K value
+project = snmf("NEUTRALES.geno",
+               K = 1:10,
+               iterations = 100,
+               entropy = TRUE,
+               repetitions = 10, project = "new")
+project
+
+plot(project, col = "olivedrab", pch = 19, cex = 1.2)
+summary(project)
+
+# select the run with the lowest cross-entropy value
+best = which.min(cross.entropy(project, K = 6))
+
+my.colors <- c("magenta", "lightblue", "olivedrab", "gold", "black" , "blue") # "orange", "yellow" , "white")
+barchart(project, K = 6, run = best, border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuals",
+         ylab = "Ancestry proportions",
+         main = "Ancestry matrix") -> bp
+axis(1, at = 1:length(bp$order), labels = bp$order, las=1, cex.axis = 0.8)
+bp
+
+# Saving the ancestry Q-Matrix for GDM
+QQ<-Q(project, K=6, run=best)
+write.csv(QQ,"MatrizQNEUTRAL.csv")
+dev.off()
+
+### ADAPTATIV
+
+datos_matriz <- as.matrix(read.csv("/Users/MPMG/Desktop/ADAPTACION/ADAPTATIVOS.csv", header = TRUE, row.names = 1))
+dim(datos_matriz)
+
+setwd("/Users/MPMG/Desktop/ADAPTACION")
+
+# Write genotypes in the lfmm and geno format
+write.lfmm(as.matrix(datos_matriz), "PUTATIVOS.lfmm")
+write.geno(as.matrix(datos_matriz), "PUTATIVOS.geno")
+
+project = snmf("PUTATIVOS.geno",
+               K = 1:10,
+               iterations = 100,
+               entropy = TRUE,
+               repetitions = 10, project = "new")
+project
+
+plot(project, col = "magenta", pch = 19, cex = 1.2)
+summary(project)
+
+# select the run with the lowest cross-entropy value
+best = which.min(cross.entropy(project, K = 8))
+
+my.colors <- c("lightblue", "aquamarine", "blue" , "orange" , "magenta" , "black" ,  "tomato" , "chocolate4")
+barchart(project, K = 8, run = best, border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuals",
+         ylab = "Ancestry proportions",
+         main = "Ancestry matrix") -> bp
+axis(1, at = 1:length(bp$order), labels = bp$order, las=1, cex.axis = 0.8)
+bp
+head(colors(), n = 100)
+
+# Saving the ancestry Q-Matrix for GDM
+QQ<-Q(project, K=8, run=best)
+write.csv(QQ,"MatrizQADAPT.csv")
+dev.off()
+
+
+################################ GENERALIZED DISSIMILARITY MODEL (GDM) ################################
+
+library(gdm)
+library(vegan)
+
+#####      LEE MATRIZ GENETICA     #####
+
+setwd("/Users/MPMG/Desktop/GDMMPM")
+dir()
+
+# MATRICES GENETICAS
+
+tablasnp<-read.table("matriz_adaptativos.txt",head=TRUE)
+
+#tablasnp<-read.table("matriz_neutrales.txt",head=TRUE )
+
+#tablasnp<-read.table("matriz_total.txt",head=TRUE)
+
+dim(tablasnp)
+
+
+###########   CALCULA MATRIZ DISTANCIA GENÉTICA ENTRE IND.
+
+distind<-vegdist(tablasnp, method = "jaccard",upper=FALSE)
+distnorm<-as.data.frame(as.matrix(distind))
+
+
+##########    TODO ESTO  ES PARA PREPARAR LA TABLA DE DATOS 
+##########    CON NOMBRE DE INDIVIDUOS, COORDENADAS, ETC
+
+popmap<-read.csv("MatrizTotal87.csv")
+dim(popmap)
+colnames(distnorm) <-popmap[,1]
+indnames<-as.vector((popmap[,1]))
+head(distnorm)
+distnorm2<-cbind(indnames,distnorm)
+head(popmap)
+coords<-popmap[,4:5] ### LAS COORDENADAS
+head(coords)
+env1<-popmap[,6:18]  #### VARIABLES PREDICTORAS
+head(env1)
+dim(env1)
+env<-cbind(coords,env1)
+head(env);dim(env)
+env<-cbind(indnames,env)
+dim(env)
+head(env)
+dim(distnorm2)
+######## ESTO ES PARA DEFINIR EL NÚMERO DE I-SPLINES DEL MODELO
+
+numbasisplines<-10
+numpredictores<-ncol(env)-2
+sp<-vector(mode="numeric",length=numpredictores)
+sp[]<-numbasisplines
+
+######## ACÁ SE TRANSFORMAN LAS MATRICES EN UNA TABLA DE PARES DE INDIVIDUOS QUE SE USARÁ PARA MODELAR
+
+DatosGDM <-formatsitepair(bioData=distnorm2, bioFormat=3, dist="bray", abundance=FALSE, 
+                         siteColumn="indnames", XColumn="LONGITUD", YColumn="LATITUD", sppColumn=NULL, abundColumn=NULL,
+                         sppFilter=0, env, distPreds=NULL,weightType="equal", custWeights=NULL, sampleSites=1)
+
+dim(DatosGDM)
+#write.csv(DatosGDM, "MatrizGDM.csv")
+
+#######  LO QUE SIGUE ES PARA SACAR DE LA TABLA DatosGDM AQUELLOS PARES DEL MISMO GRUPO
+#######  EL GRUPO A QUE PERTENECE UN INDIVIDUO ESTÁ AL FINAL DE LA TABLA AMBIENTAL (Matriz_Total_fin_84ind.csv), esto lo hice en excel y luego eliminé en R las posiciones que es lo que se hace ahora)
+#######  SI ESTOS GRUPOS CAMBIAN ESTA PARTE DEBE SER EDITADA, EN MI CASO FUE:
+
+a<-DatosGDM[-c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,21,32,43,54,64,75,87,88,89,90,91,92,93,94,95,96,97,98,99,100,106,117,128,139,149,160,172,173,174,175,176,177,178,179,180,181,182,183,184,190,201,212,223,233,244,256,257,258,259,260,261,262,263,264,265,266,267,273,284,295,306,316,327,339,340,341,342,343,344,345,346,347,348,349,355,366,377,388,398,409,421,422,423,
+               424,425,426,427,428,429,430,436,447,458,469,479,490,502,503,504,505,506,507,508,509,510,516,527,538,549,559,570,582,583,584,585,586,587,588,589,595,606,617,628,638,649,661,662,663,664,665,666,667,673,684,695,706,716,727,739,740,741,742,743,744,750,761,772,783,793,804,816,817,818,819,820,826,837,848,859,869,880,892,893,894,895,901,912,923,934,944,955,
+               967,968,969,975,986,997,1008,1018,1029,1041,1042,1048,1059,1070,1081,1091,1102,1114,1120,1131,1142,1153,1163,1174,1191,1202,1213,1224,1234,1245,1607,1618,1629,1639,1650,2267,2278,2288,2299,2806,2816,2827,3223,3234,3499,2753,2754,2755,2756,2757,2758,2759,2760,2761,2762,2764,2765,2766,2770,2772,2774,2775,2776,2777,2782,2787,2788,2789,2790,2791,2792,2793,
+               2794,2795,2839,2840,2841,2842,2843,2844,2845,2846,2847,2849,2850,2851,2855,2857,2859,2860,2861,2862,2867,2872,2873,2874,2875,2876,2877,2878,2879,2880,2881,2882,2883,2884,2885,2886,2887,2888,2890,2891,2892,2896,2898,2900,2901,2902,2903,2908,2913,2914,2915,2916,2917,2918,2919,2920,2921,2922,2923,2924,2925,2926,2927,2928,2930,2931,2932,2936,2938,2940,2941,
+               2942,2943,2948,2953,2954,2955,2956,2957,2958,2959,2960,2961,2962,2963,2964,2965,2966,2967,2969,2970,2971,2975,2977,2979,2980,2981,2982,2987,2992,2993,2994,2995,2996,2997,2998,2999,3000,3001,3002,3003,3004,3005,3007,3008,3009,3013,3015,3017,3018,3019,3020,3025,3030,3031,3032,3033,3034,3035,3036,3037,3038,3039,3040,3041,3042,3044,3045,3046,3050,3052,3054,
+               3055,3056,3057,3062,3067,3068,3069,3070,3071,3072,3073,3074,3075,3076,3077,3078,3080,3081,3082,3086,3088,3090,3091,3092,3093,3098,3103,3104,3105,3106,3107,3108,3109,3110,3111,3112,3113,3115,3116,3117,3121,3123,3125,3126,3127,3128,3133,3138,3139,3140,3141,3142,3143,3144,3145,3146,3147,3149,3150,3151,3155,3157,3159,3160,3161,3162,3167,3172,3173,3174,3175,
+               3176,3177,3178,3179,3180,3182,3183,3184,3188,3190,3192,3193,3194,3195,3200,3205,3206,3207,3208,3209,3210,3211,3212,3213,3246,3247,3251,3253,3255,3256,3257,3258,3263,3268,3269,3270,3271,3272,3273,3274,3275,3276,3277,3281,3283,3285,3286,3287,3288,3293,3298,3299,3300,3301,3302,3303,3304,3305,3306,3310,3312,3314,3315,3316,3317,3322,3327,3328,3329,3330,3331,
+               3332,3333,3334,3335,3418,3420,3421,3422,3423,3428,3433,3434,3435,3436,3437,3438,3439,3440,3441,3467,3468,3469,3470,3475,3480,3481,3482,3483,3484,3485,3486,3487,3488,3511,3512,3513,3518,3523,3524,3525,3526,3527,3528,3529,3530,3531,3532,3533,3538,3543,3544,3545,3546,3547,3548,3549,3550,3551,3552,3557,3562,3563,3564,3565,3566,3567,3568,3569,3570,3575,3580,3581,
+               3582,3583,3584,3585,3586,3587,3588,3655,3656,3657,3658,3659,3660,3661,3662,3663,3706,3707,3708,3709,3710,3711,3712,3713,3714,3715,3716,3717,3718,3719,3720,3721,3722,3723,3724,3725,3726,3727,3728,3729,3730,3731,3732,3733,3734,3735,3736,3737,3738,3739,3740,3741,3336,3337,3339,3346,3347,3348,3349,3351,3353,3354,3364,3366,3373,3374,3375,3376,3378,3380,3381,3392,3399,
+               3400,3401,3402,3404,3406,3407,3448,3449,3450,3451,3453,3455,3456,3589,3590,3591,3593,3595,3596,3606,3607,3609,3611,3612,3622,3624,3626,3627,3638,3640,3641,3665,3666,3687,1257,1258,1259,1260,1262,1263,1327,1328,1329,1331,1332,1396,1397,1399,1400,1464,1466,1467,1532,1533,1662,1789,1790,1791,1792,1793,1794,1795,1797,1798,1851,1852,1853,1854,1855,1856,1858,1859,1912,1913,
+               1914,1915,1916,1918,1919,1972,1973,1974,1975,1977,1978,2031,2032,2033,2035,2036,2089,2090,2092,2093,2146,2148,2149,2203,2204,2311,2416,2417,2418,2419,2420,2421,2467,2468,2469,2470,2471,2517,2518,2519,2520,2566,2567,2568,2614,2615,2661),]
+
+dim(a)
+head(a)
+
+gdm.1<-gdm(a,geo=T , splines = sp)
+summary(gdm.1)
+plot(gdm.1, plot.layout = c(4,3))
+
+# VALIDACIÓN DEL MODELO
+validacionModelo <- gdm.crossvalidation(a, train.proportion=0.9, n.crossvalid.tests=1,
+                    geo=TRUE, splines=sp, knots=NULL)
+
+# EVALUAR SIGNIFICANCIA
+
+gdm.varImp(a, geo=TRUE, splines = sp, predSelect = FALSE, nPerm = 50, pValue=0.05, 
+           sampleSites = 1, sampleSitePairs = 1, outFile = NULL)
+
+
+################################ ANALISIS DE RUDUNDACIA (RDA) ################################
+
+library(psych)    # Used to investigate correlations among predictors
+library(vegan)    # Used to run RDA
+
+setwd("/Users/MPMG/Desktop/RDA")
+dir()
+
+# MATRICES GENETICAS
+
+gen.imp<-read.csv("TODOSS.csv",head=TRUE)
+dim(gen.imp)
+sum(is.na(gen.imp)) # No NAs
+env<-read.csv("Matriz_P.csv")
+env$GENOTIPO <- as.character(env$GENOTIPO) # Make GENOTIPO names characters (not factors)
+rownames(gen.imp) <-env[,1]
+
+# Confirm that genotypes and environmental data are in the same order
+identical(rownames(gen.imp), env[,1]) 
+
+pred <- env[,6:15]
+colnames(pred) <- c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET")
+pairs.panels(pred, scale=T)
+
+wolf.rda <- rda(gen.imp ~ ., data=pred, scale=T)
+wolf.rda
+summary(wolf.rda)
+RsquareAdj(wolf.rda) # ajustar proporcion de varianza (equivalente a R2 en regresion múltiple) 
+# el valor ajustado es el porcentaje explicado
+
+summary(eigenvals(wolf.rda, model = "constrained"))
+screeplot(wolf.rda)
+
+#signif.full <- ?anova.cca(wolf.rda, parallel=getOption("mc.cores")) # default is permutation=999
+signif.full
+
+# ver cuantos RDA son significativos
+#signif.axis <- anova.cca(wolf.rda, by="axis", parallel=getOption("mc.cores"))
+#signif.axis
+
+vif.cca(wolf.rda)
+wolf.rda
+
+dev.off()
+
+plot(wolf.rda, scaling=3)          # default is axes 1 and 2
+plot(wolf.rda, choices = c(1, 3), scaling=3)  # axes 1 and 3
+
+levels(env$GRUPO) <- c("Cifuncho-Chanaral","Coquimbo","Putaendo","Puquios","Chollay","Carrizalillo")
+env$GRUPO <- factor(env$GRUPO, levels = c("Cifuncho-Chanaral","Coquimbo","Putaendo","Puquios","Chollay","Carrizalillo"))
+
+eco <- env$GRUPO
+bg <- c("#2FD3CD","#33a02c","#0433ff","#9274e5","#D0A748","#FF6F6F") # 6 nice colors for our ecotypes
+
+# axes 1 & 2
+plot(wolf.rda, type="n", scaling=3)
+points(wolf.rda, display="species", pch=20, cex=0.7, col="gray32", scaling=3)           # the SNPs
+points(wolf.rda, display="sites", pch=21, cex=1.3, col="gray32", scaling=3, bg=bg[eco]) # the wolves
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1)                           # the predictors
+legend("bottomright", legend=levels(eco), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 3 & 4
+plot(wolf.rda, type="n", scaling=3, choices=c(3,4))
+points(wolf.rda, display="species", pch=20, cex=0.7, col="gray32", scaling=3, choices=c(3,4))
+points(wolf.rda, display="sites", pch=21, cex=1.3, col="gray32", scaling=3, bg=bg[eco], choices=c(3,4))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(3,4))
+legend("topleft", legend=levels(eco), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 4 & 5
+plot(wolf.rda, type="n", scaling=3, choices=c(4,5))
+points(wolf.rda, display="species", pch=20, cex=0.7, col="gray32", scaling=3, choices=c(4,5))
+points(wolf.rda, display="sites", pch=21, cex=1.3, col="gray32", scaling=3, bg=bg[eco], choices=c(4,5))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(4,5))
+legend("topleft", legend=levels(eco), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+
+load.rda <- scores(wolf.rda, choices=c(1:5), display="species")  # Species scores for the first three constrained axes
+hist(load.rda[,1], main="Loadings on RDA1")
+hist(load.rda[,2], main="Loadings on RDA2")
+hist(load.rda[,3], main="Loadings on RDA3") 
+hist(load.rda[,4], main="Loadings on RDA4")
+hist(load.rda[,5], main="Loadings on RDA5") 
+
+outliers <- function(x,z =2.5){
+  lims <- mean(x) + c(-1, 1) * 2.5 * sd(x)     # find loadings +/-z sd from mean loading     
+  x[x < lims[1] | x > lims[2]]               # locus names in these tails
+}
+
+cand1 <- outliers(load.rda[,1],3)
+str(cand1)
+cand2 <- outliers(load.rda[,2],3)
+str(cand2)
+cand3 <- outliers(load.rda[,3],3) 
+str(cand3)
+cand4 <- outliers(load.rda[,4],3) 
+str(cand4)
+cand5 <- outliers(load.rda[,5],3) 
+str(cand5)
+
+ncand <- length(cand1) + length(cand2) + length(cand3) + length(cand4) + length(cand5)
+ncand
+
+cand1 <- cbind.data.frame(rep(1,times=length(cand1)), names(cand1), unname(cand1))
+cand2 <- cbind.data.frame(rep(2,times=length(cand2)), names(cand2), unname(cand2))
+cand3 <- cbind.data.frame(rep(3,times=length(cand3)), names(cand3), unname(cand3))
+cand4 <- cbind.data.frame(rep(4,times=length(cand4)), names(cand4), unname(cand4))
+cand5 <- cbind.data.frame(rep(5,times=length(cand5)), names(cand5), unname(cand5))
+
+# Correlacion con cada predictor
+
+colnames(cand1) <- colnames(cand2) <- colnames(cand3) <- colnames(cand4) <- colnames(cand5) <- c("axis","snp","loading")
+
+cand <- rbind(cand1, cand2, cand3, cand4, cand5)
+cand$snp <- as.character(cand$snp)
+
+foo <- matrix(nrow=(ncand), ncol=10)  # 8 columns for 8 predictors
+colnames(foo) <- c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET")
+
+for (i in 1:length(cand$snp)) {
+  nam <- cand[i,2]
+  snp.gen <- gen.imp[,nam]
+  foo[i,] <- apply(pred,2,function(x) cor(x,snp.gen))
+}
+
+cand <- cbind.data.frame(cand,foo)  
+head(cand)
+str(cand)
+
+# en mas de un eje del RDA (para borrar en caso de que hayan duplicados)
+length(cand$snp[duplicated(cand$snp)]) 
+
+cand <- cand[!duplicated(cand$snp),] # remove duplicate detections
+str(cand)
+dim(cand)
+
+for (i in 1:length(cand$snp)) {
+  bar <- cand[i,]
+  cand[i,14] <- names(which.max(abs(bar[4:13]))) # gives the variable
+  cand[i,15] <- max(abs(bar[4:13]))              # gives the correlation
+}
+
+colnames(cand)[14] <- "predictor"
+colnames(cand)[15] <- "correlation"
+
+#write.csv(cand, "candRDA1064.csv")
+
+table(cand$predictor) 
+
+sel <- cand$snp
+env <- cand$predictor
+env[env=="BIO_02"] <- '#1f78b4'
+  env[env=="BIO_03"] <- '#a6cee3'
+    env[env=="BIO_09"] <- '#6a3d9a'
+      env[env=="BIO_10"] <- '#e31a1c'
+        env[env=="BIO_14"] <- '#33a02c'
+          env[env=="BIO_15"] <- '#ffff33'
+            env[env=="PET_MEAN"] <- '#fb9a99'
+              env[env=="RAD_ANUAL"] <- '#b2df8a'
+                env[env=="AI"] <- '#b41f78'
+                  env[env=="ET"] <- '#db722b'
+
+# color by predictor:
+col.pred <- rownames(wolf.rda$CCA$v) # pull the SNP names
+
+for (i in 1:length(sel)) {           # color code candidate SNPs
+foo <- match(sel[i],col.pred)
+col.pred[foo] <- env[i]
+}
+            
+col.pred[grep("V",col.pred)] <- '#f1eef6' # non-candidate SNPs
+empty <- col.pred
+empty[grep("#f1eef6",empty)] <- rgb(0,1,0, alpha=0) # transparent
+empty.outline <- ifelse(empty=="#00FF0000","#00FF0000","gray32")
+bg <- c('#1f78b4','#a6cee3','#6a3d9a','#e31a1c','#33a02c','#ffff33','#fb9a99','#b2df8a','#b41f78','#db722b')
+
+# axes 1 & 2
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3)
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3)
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1)
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 1 y 4
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1), choices=c(1,4))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3, choices=c(1,4))
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3, choices=c(1,4))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(1,4))
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 4 y 5
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1), choices=c(4,5))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3, choices=c(4,5))
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3, choices=c(4,5))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(4,5))
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 3 & 4
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1), choices=c(3,4))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3, choices=c(3,4))
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3, choices=c(3,4))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(3,4))
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 1 y 3
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1), choices=c(1,3))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3, choices=c(1,3))
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3, choices=c(1,3))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(1,3))
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+
+# axes 1 & 5
+plot(wolf.rda, type="n", scaling=3, xlim=c(-1,1), ylim=c(-1,1), choices=c(1,5))
+points(wolf.rda, display="species", pch=21, cex=1, col="gray32", bg=col.pred, scaling=3, choices=c(1,5))
+points(wolf.rda, display="species", pch=21, cex=1, col=empty.outline, bg=empty, scaling=3, choices=c(1,5))
+text(wolf.rda, scaling=3, display="bp", col="#0868ac", cex=1, choices=c(1,5))
+legend("bottomright", legend=c("BIO_02", "BIO_03", "BIO_09","BIO_10", "BIO_14", "BIO_15", "PET_MEAN", "RAD_ANUAL","AI","ET"), bty="n", col="gray32", pch=21, cex=1, pt.bg=bg)
+dev.off()
+
+cand$snp
+
+write.csv(cand, "snpsADAPT_RDA.csv")
+
+
+FINNN
+
+
